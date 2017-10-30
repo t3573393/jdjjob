@@ -11,6 +11,8 @@ Requirements
 - java 1.6+
 - MySqlJDBC
 - commons-dbutils
+- c3p0  
+- jackson  
 
 Setup
 -----
@@ -40,35 +42,41 @@ CREATE TABLE `jobs` (
 
 > You may need to use BLOB as the column type for `handler` if you are passing in serialized blobs of data instead of record ids. For more information, see [this link](https://php.net/manual/en/function.serialize.php#refsect1-function.serialize-returnvalues) This may be the case for errors such as the following: `unserialize(): Error at offset 2010 of 2425 bytes`
 
-Tell DJJob how to connect to your database:
-
-```java
-Map<String,String> configure = new HashMap<String,String>();
-configure.put("driver", "mysql");
-configure.put("host", "127.0.0.1");
-configure.put("dbname", "djjob");
-configure.put("user", "root");
-configure.put("password", "topsecret");
-DJJob.configure(configure);
-```
+Tell DJJob how to connect to your database just use the c3p0-config.xml.
 
 
 Usage
 -----
 
-Jobs are PHP objects that respond to a method `perform`. Jobs are serialized and stored in the database.
+Jobs are Java objects that respond to a method `perform`. Jobs are serialized and stored in the database.
 
 ```java
 // Job class
 class HelloWorldJob {
     private String name;
     
+    public void getName() {
+        return name;
+    }
+    
+    public String setName(String name) {
+        return this.name;
+    }
+    
+    //the dummy constructor for the jackson
+    public HelloWorldJob() {
+    }
+   
     public HelloWorldJob(String name) {
         this.name = name;
     }
-    public void perform() {
+    public void perform() throws Exception {
         System.out.println(String.formate("Hello %s!", this.name));
     }
+    
+    public void onDjjobRetryError(String error) {
+    }
+    
 }
 
 // enqueue a new job
@@ -84,8 +92,20 @@ DJJob.enqueue(new SignupEmailJob("dev@seatgeek.com"), "email");
 At SeatGeek, we run an email-specific queue. Emails have a `sendLater` method which places a job on the `email` queue. Here's a simplified version of our base `Email` class:
 
 ```java
-class Email {
+class Email implements DJJobHandlerInterface {
     private String recipient;
+    
+    public void getRecipient() {
+        return recipient;
+    }
+    
+    public String setRecipient(String recipient) {
+        return this.recipient;
+    }
+    
+    //the dummy constructor for the jackson
+    public Email() {
+    }
     
     public Email(String recipient) {
         this.recipient = recipient;
@@ -94,11 +114,14 @@ class Email {
         // do some expensive work to build the email: geolocation, etc..
         // use mail api to send this email
     }
-    public void perform() {
+    public void perform() throws Exception {
         this.send();
     }
-    public function sendLater() {
+    public void sendLater() {
         DJJob.enqueue(this, "email");
+    }
+    
+    public void onDjjobRetryError(String error) {
     }
 }
 ```
@@ -115,7 +138,12 @@ DJWorker worker = new DJWorker(options);
 worker->start();
 ```
 
+Notes  
+-------  
+The handler object must implements the interface DJJobHandlerInterface, and the properties that want to be save the db, must have the getter and setter method. Besides for the jackson json mapper, the class must have the none parameter constructor method.
+
 Changes
 -------
 
 - Use the prefixName to distinguish workers in the same machine.
+- Use the jackson for the object serialization.
