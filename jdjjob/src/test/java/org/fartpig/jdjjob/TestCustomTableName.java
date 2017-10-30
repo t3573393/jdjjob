@@ -1,82 +1,113 @@
 package org.fartpig.jdjjob;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.fartpig.jdjjob.dao.DJJobDao;
+
 import junit.framework.TestCase;
 
 public class TestCustomTableName extends TestCase {
 
-	private void assertHandler(String file, String line, String code, String desc) {
-		System.out.println(String.format("Assertion failed at %s:%s: %s: %s", file, line, code, desc));
+	public static class HelloWorldJob implements DJJobHandlerInterface {
+
+		private String name;
+
+		public String getName() {
+			return name;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+
+		public HelloWorldJob(String name) {
+			this.name = name;
+		}
+
+		public HelloWorldJob() {
+
+		}
+
+		public void perform() throws Exception {
+			System.out.println(String.format("Hello %s!\n", this.name));
+			try {
+				Thread.sleep(1000L);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+
+		public void onDjjobRetryError(String error) {
+			System.out.println(String.format("error in HelloWorldJob: %s!\n", error));
+		}
+	}
+
+	public static class FailingJob implements DJJobHandlerInterface {
+
+		public FailingJob() {
+
+		}
+
+		public void perform() throws Exception {
+			try {
+				Thread.sleep(1000L);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			throw new Exception("Uh oh");
+		}
+
+		public void onDjjobRetryError(String error) {
+			System.out.println(String.format("error in FailingJob: %s!\n", error));
+		}
 	}
 
 	public void testCustTable() {
+		Map<String, Object> config = new HashMap<String, Object>();
+		config.put("dbname", "djjob");
+		DJJob.configure(new Object[] { config, "my_jobs" });
 
-				DJJob::configure([
-				    'driver'   => 'mysql',
-				    'host'     => '127.0.0.1',
-				    'dbname'   => 'djjob',
-				    'user'     => 'root',
-				    'password' => 'root',
-				], 'my_jobs');
+		DJJobDao dao = new DJJobDao();
+		StringBuilder sb = new StringBuilder();
+		sb.append("DELETE FROM ");
+		sb.append(DJBase.jobsTable);
+		dao.execute(sb.toString(), Collections.<Object>emptyList());
 
-				DJJob::runQuery("
-				DROP TABLE IF EXISTS `my_jobs`;
-				CREATE TABLE `my_jobs` (
-				`id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-				`handler` VARCHAR(255) NOT NULL,
-				`queue` VARCHAR(255) NOT NULL DEFAULT 'default',
-				`attempts` INT UNSIGNED NOT NULL DEFAULT 0,
-				`run_at` DATETIME NULL,
-				`locked_at` DATETIME NULL,
-				`locked_by` VARCHAR(255) NULL,
-				`failed_at` DATETIME NULL,
-				`error` VARCHAR(255) NULL,
-				`created_at` DATETIME NOT NULL
-				) ENGINE = MEMORY;
-				");
+		Map<String, Object> status = DJJob.status("default");
 
-				class HelloWorldJob {
-				    public function __construct($name) {
-				        $this->name = $name;
-				    }
-				    public function perform() {
-				        echo "Hello {$this->name}!\n";
-				        sleep(1);
-				    }
-				}
+		assertEquals(((Long) status.get("outstanding")).longValue(), 0L);
+		assertEquals(((Long) status.get("locked")).longValue(), 0L);
+		assertEquals(((Long) status.get("failed")).longValue(), 0L);
+		assertEquals(((Long) status.get("total")).longValue(), 0L);
 
-				class FailingJob {
-				    public function perform() {
-				        sleep(1);
-				        throw new Exception("Uh oh");
-				    }
-				}
+		System.out.println("=====================\nStarting run of DJJob\n=====================\n\n");
 
-				$status = DJJob::status();
+		DJJob.enqueue(new HelloWorldJob("delayed_job"), "default", null);
+		DJJob.bulkEnqueue(
+				Arrays.<DJJobHandlerInterface>asList(new HelloWorldJob("shopify"), new HelloWorldJob("github")),
+				"default", null);
 
-				assert('$status["outstanding"] == 0', "Initial outstanding status is incorrect");
-				assert('$status["locked"] == 0', "Initial locked status is incorrect");
-				assert('$status["failed"] == 0', "Initial failed status is incorrect");
-				assert('$status["total"] == 0', "Initial total status is incorrect");
+		DJJob.enqueue(new FailingJob(), "default", null);
 
-				printf("=====================\nStarting run of DJJob\n=====================\n\n");
+		Map<String, Object> options = new HashMap<String, Object>();
+		options.put("count", 5);
+		options.put("max_attempts", 2);
+		options.put("sleep", 10);
 
-				DJJob::enqueue(new HelloWorldJob("delayed_job"));
-				DJJob::bulkEnqueue(array(
-				    new HelloWorldJob("shopify"),
-				    new HelloWorldJob("github"),
-				));
-				DJJob::enqueue(new FailingJob());
+		String workPrefix = "fartpig:";
+		DJWorker worker = new DJWorker(options, workPrefix);
+		worker.start();
+		System.out.println("\n============\nRun complete\n============\n\n");
 
-				$worker = new DJWorker(array("count" => 5, "max_attempts" => 2, "sleep" => 10));
-				$worker->start();
-				printf("\n============\nRun complete\n============\n\n");
+		status = DJJob.status("default");
 
-				$status = DJJob::status();
-
-				assert('$status["outstanding"] == 0', "Final outstanding status is incorrect");
-				assert('$status["locked"] == 0', "Final locked status is incorrect");
-				assert('$status["failed"] == 1', "Final failed status is incorrect");
-				assert('$status["total"] == 1', "Final total status is incorrect");
+		assertEquals(((Long) status.get("outstanding")).longValue(), 0L);
+		assertEquals(((Long) status.get("locked")).longValue(), 0L);
+		assertEquals(((Long) status.get("failed")).longValue(), 1L);
+		assertEquals(((Long) status.get("total")).longValue(), 1L);
 
 	}
 }

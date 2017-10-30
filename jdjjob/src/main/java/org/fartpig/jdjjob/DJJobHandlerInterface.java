@@ -7,5 +7,7 @@ public interface DJJobHandlerInterface {
 	/**
 	 * Method that will perform the job when retrieved from the jobs table.
 	 */
-	public void perform();
+	public void perform() throws Exception;
+
+	public void onDjjobRetryError(String error);
 }

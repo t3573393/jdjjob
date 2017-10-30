@@ -2,13 +2,19 @@ package org.fartpig.jdjjob;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+
+import org.fartpig.jdjjob.dao.DJJobDao;
 
 /**
  * The worker class that can empty a queue.
  */
 public class DJWorker extends DJBase {
+
 	// This is a singleton-ish thing. It wouldn't really make sense to
 	// instantiate more than one in a single request (or commandline task)
 
@@ -24,11 +30,12 @@ public class DJWorker extends DJBase {
 	/**
 	 * DJWorker constructor.
 	 *
-	 * The following options are available: `queue`: The queue to work on. Default:
-	 * 'default' `count`: How many jobs to execute before exiting. Use '0' for
-	 * no-limit. Default: '0' `sleep`: How long to sleep if no jobs are found.
-	 * Default: '5' `max_attempts`: How many times to try a job before bailing out.
-	 * Default: '5' `fail_on_output`: Whether to fail on output. Default: 'false'
+	 * The following options are available: `queue`: The queue to work on.
+	 * Default: 'default' `count`: How many jobs to execute before exiting. Use
+	 * '0' for no-limit. Default: '0' `sleep`: How long to sleep if no jobs are
+	 * found. Default: '5' `max_attempts`: How many times to try a job before
+	 * bailing out. Default: '5' `fail_on_output`: Whether to fail on output.
+	 * Default: 'false'
 	 *
 	 * @param Map<String,Object>
 	 *            options The settings for this worker.
@@ -47,7 +54,7 @@ public class DJWorker extends DJBase {
 
 		this.queue = (String) options.get("queue");
 		this.count = (Integer) options.get("count");
-		this.sleep = (Integer) options.get("sleep");
+		this.sleep = ((Integer) options.get("sleep")) * 1000;
 		this.maxAttempts = (Integer) options.get("max_attempts");
 		this.failOnOutput = (Boolean) options.get("fail_on_output");
 
@@ -64,105 +71,115 @@ public class DJWorker extends DJBase {
 
 		this.name = String.format("%s@%s", workPrefix, this.hostName);
 
-		if (function_exists("pcntl_signal")) {
-			pcntl_signal(SIGTERM, array($this, "handleSignal"));
-			pcntl_signal(SIGINT, array($this, "handleSignal"));
-		}
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+
+			public void run() {
+				DJWorker.this.handleSignal();
+			}
+
+		});
 	}
 
 	/**
-     * Handles a signal from the operating system.
-     *
-     * @param string $signo The signal received from the OS.
-     */
-    public function handleSignal($signo) {
-        $signals = array(
-            SIGTERM => "SIGTERM",
-            SIGINT  => "SIGINT"
-        );
-        $signal = $signals[$signo];
-
-        $this->log("[WORKER] Received received {$signal}... Shutting down", self::INFO);
-        $this->releaseLocks();
-        die(0);
-    }
+	 * Handles a signal from the operating system.
+	 *
+	 */
+	public void handleSignal() {
+		log("[WORKER] Received received signal ... Shutting down", DJBase.INFO);
+		this.releaseLocks();
+	}
 
 	/**
-     * Releases all locks this worker has on the jobs table.
-     */
-    public function releaseLocks() {
-        $this->runUpdate("
-            UPDATE " . self::$jobsTable . "
-            SET locked_at = NULL, locked_by = NULL
-            WHERE locked_by = ?",
-            array($this->name)
-        );
-    }
+	 * Releases all locks this worker has on the jobs table.
+	 */
+	public void releaseLocks() {
+
+		DJJobDao dao = new DJJobDao();
+		StringBuilder sb = new StringBuilder();
+		sb.append(" UPDATE ");
+		sb.append(DJBase.jobsTable);
+		sb.append(" SET locked_at = NULL, locked_by = NULL ");
+		sb.append(" WHERE locked_by = ? ");
+		List<Object> args = new ArrayList<Object>();
+		args.add(this.name);
+		dao.execute(sb.toString(), args);
+	}
 
 	/**
-     * Returns a new job ordered by most recent first
-     * why this?
-     *     run newest first, some jobs get left behind
-     *     run oldest first, all jobs get left behind
-     *
-     * @return \DJJob|false A job if one was successfully locked. Otherwise false.
-     */
-    public function getNewJob() {
-        # we can grab a locked job if we own the lock
-        $rs = $this->runQuery("
-            SELECT id
-            FROM   " . self::$jobsTable . "
-            WHERE  queue = ?
-            AND    (run_at IS NULL OR NOW() >= run_at)
-            AND    (locked_at IS NULL OR locked_by = ?)
-            AND    failed_at IS NULL
-            AND    attempts < ?
-            ORDER BY created_at DESC
-            LIMIT  10
-        ", array($this->queue, $this->name, $this->max_attempts));
+	 * Returns a new job ordered by most recent first why this? run newest
+	 * first, some jobs get left behind run oldest first, all jobs get left
+	 * behind
+	 *
+	 * @return \DJJob|false A job if one was successfully locked. Otherwise
+	 *         false.
+	 */
+	public DJJob getNewJob() {
+		// we can grab a locked job if we own the lock
+		DJJobDao dao = new DJJobDao();
 
-        // randomly order the 10 to prevent lock contention among workers
-        shuffle($rs);
+		StringBuilder sb = new StringBuilder();
+		sb.append(" SELECT id FROM ");
+		sb.append(DJBase.jobsTable);
+		sb.append(" WHERE  queue = ? ");
+		sb.append(" AND    (run_at IS NULL OR NOW() >= run_at) ");
+		sb.append(" AND    (locked_at IS NULL OR locked_by = ?) ");
+		sb.append(" AND    failed_at IS NULL");
+		sb.append(" AND    attempts < ? ");
+		sb.append(" ORDER BY created_at DESC ");
+		sb.append(" LIMIT  10 ");
+		List<Object> args = new ArrayList<Object>();
+		args.add(this.queue);
+		args.add(this.name);
+		args.add(this.maxAttempts);
 
-        foreach ($rs as $r) {
-            $job = new DJJob($this->name, $r["id"], array(
-                "max_attempts" => $this->max_attempts,
-                "fail_on_output" => $this->fail_on_output
-            ));
-            if ($job->acquireLock()) return $job;
-        }
+		List<Object[]> rs = dao.executeQuery(sb.toString(), args);
 
-        return false;
-    }
+		// randomly order the 10 to prevent lock contention among workers
+		Collections.shuffle(rs);
+
+		Map<String, Object> options = new HashMap<String, Object>();
+		options.put("max_attempts", this.maxAttempts);
+		options.put("fail_on_output", this.failOnOutput);
+
+		for (Object[] obj : rs) {
+			DJJob job = new DJJob(this.name, (Long) obj[0], options);
+			if (job.acquireLock()) {
+				return job;
+			}
+		}
+
+		return null;
+	}
 
 	/**
-     * Starts the worker process.
-     */
-    public function start() {
-        $this->log("[JOB] Starting worker {$this->name} on queue::{$this->queue}", self::INFO);
+	 * Starts the worker process.
+	 */
+	public void start() {
+		log(DJBase.INFO, "[JOB] Starting worker %s on queue::%s", this.name, this.queue);
 
-        $count = 0;
-        $job_count = 0;
-        try {
-            while ($this->count == 0 || $count < $this->count) {
-                if (function_exists("pcntl_signal_dispatch")) pcntl_signal_dispatch();
+		int count = 0;
+		int jobCount = 0;
+		try {
+			while (this.count == 0 || count < this.count) {
 
-                $count += 1;
-                $job = $this->getNewJob($this->queue);
+				count += 1;
+				DJJob job = this.getNewJob();
 
-                if (!$job) {
-                    $this->log("[JOB] Failed to get a job, queue::{$this->queue} may be empty", self::DEBUG);
-                    sleep($this->sleep);
-                    continue;
-                }
+				if (job == null) {
+					log(DJBase.DEBUG, "[JOB] Failed to get a job, queue::%s may be empty", this.queue);
+					Thread.sleep(this.sleep);
+					continue;
+				}
 
-                $job_count += 1;
-                $job->run();
-            }
-        } catch (Exception $e) {
-            $this->log("[JOB] unhandled exception::\"{$e->getMessage()}\"", self::ERROR);
-        }
+				jobCount += 1;
+				job.run();
+			}
+		} catch (Exception e) {
+			log(DJBase.ERROR, "[JOB] unhandled exception::\"%s\"", e.getMessage());
+			e.printStackTrace();
+		}
 
-        $this->log("[JOB] worker shutting down after running {$job_count} jobs, over {$count} polling iterations", self::INFO);
-    }
+		log(DJBase.INFO, "[JOB] worker shutting down after running %d jobs, over %d polling iterations", jobCount,
+				count);
+	}
 }

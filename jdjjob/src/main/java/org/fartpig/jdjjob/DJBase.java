@@ -18,29 +18,9 @@ public abstract class DJBase {
 	protected static final int DEBUG = 0;
 
 	/**
-	 * @var int
-	 */
-	private static int logLevel = DEBUG;
-
-	/**
 	 * @var string
 	 */
-	protected static String jobsTable = "";
-
-	/**
-	 * @var string
-	 */
-	private static String dsn = "";
-
-	/**
-	 * @var string
-	 */
-	private static String user = "";
-
-	/**
-	 * @var string
-	 */
-	private static String password = "";
+	public static String jobsTable = "jobs";
 
 	/**
 	 * @var int
@@ -62,7 +42,7 @@ public abstract class DJBase {
 			if (args[0] instanceof Map) {
 				configureWithOptions((Map<String, String>) args[0], null);
 			} else {
-				configureWithDsnAndOptions((String) args[0], null, null);
+				configureWithOptions(null, null);
 			}
 			break;
 		}
@@ -70,12 +50,12 @@ public abstract class DJBase {
 			if (args[0] instanceof Map) {
 				configureWithOptions((Map<String, String>) args[0], (String) args[1]);
 			} else {
-				configureWithDsnAndOptions((String) args[0], (Map<String, String>) args[1], null);
+				configureWithOptions((Map<String, String>) args[1], null);
 			}
 			break;
 		}
 		case 3: {
-			configureWithDsnAndOptions((String) args[0], (Map<String, String>) args[1], (String) args[2]);
+			configureWithOptions((Map<String, String>) args[1], (String) args[2]);
 			break;
 		}
 		}
@@ -84,17 +64,15 @@ public abstract class DJBase {
 	/**
 	 * Configures DJJob with certain values for the database connection.
 	 *
-	 * @param $dsn
-	 *            The PDO connection string.
-	 * @param array
-	 *            $options The options for the PDO connection.
+	 * @param Map<String,
+	 *            String> options The options for the PDO connection.
 	 * @param string
-	 *            $jobsTable Name of the jobs table.
+	 *            jobsTable Name of the jobs table.
 	 *
 	 * @throws DJException
 	 *             Throws an exception with invalid parameters.
 	 */
-	protected static void configureWithDsnAndOptions(String dsn, Map<String, String> options, String jobsTable) {
+	protected static void configureWithOptions(Map<String, String> options, String jobsTable) {
 		if (jobsTable == null || jobsTable.length() == 0) {
 			jobsTable = "jobs";
 		}
@@ -103,18 +81,7 @@ public abstract class DJBase {
 			options = new HashMap<String, String>();
 		}
 
-		if (!options.containsKey("mysql_user")) {
-			throw new DJException("Please provide the database user in configure options array.");
-		}
-		if (!options.containsKey("mysql_pass")) {
-			throw new DJException("Please provide the database password in configure options array.");
-		}
-
-		DJBase.dsn = dsn;
 		DJBase.jobsTable = jobsTable;
-
-		DJBase.user = options.get("mysql_user");
-		DJBase.password = options.get("mysql_pass");
 
 		// searches for retries
 		if (options.containsKey("retries")) {
@@ -122,59 +89,8 @@ public abstract class DJBase {
 		}
 	}
 
-	/**
-	 * @param array
-	 *            $options
-	 * @param string
-	 *            $jobsTable
-	 *
-	 * @throws DJException
-	 *             Throws an exception with invalid parameters.
-	 */
-	protected static void configureWithOptions(Map<String, String> options, String jobsTable) {
-
-		if (jobsTable == null || jobsTable.length() == 0) {
-			jobsTable = "jobs";
-		}
-
-		if (!options.containsKey("driver")) {
-			throw new DJException("Please provide the database driver used in configure options array.");
-		}
-		if (!options.containsKey("user")) {
-			throw new DJException("Please provide the database user in configure options array.");
-		}
-		if (!options.containsKey("password")) {
-			throw new DJException("Please provide the database password in configure options array.");
-		}
-
-		DJBase.user = options.get("user");
-		DJBase.password = options.get("password");
-		DJBase.jobsTable = jobsTable;
-
-		DJBase.dsn = options.get("driver") + ":";
-		for (Map.Entry<String, String> enty : options.entrySet()) {
-			// skips options already used
-			if (enty.getKey().equals("driver") || enty.getKey().equals("user") || enty.getKey().equals("password")) {
-				continue;
-			}
-
-			// searches for retries
-			if (enty.getKey().equals("retries")) {
-				DJBase.retries = (int) Integer.valueOf(enty.getValue());
-				continue;
-			}
-
-			DJBase.dsn += enty.getKey() + "=" + enty.getValue() + ";";
-		}
-
-	}
-
-	/**
-	 * @param int
-	 *            $const The log level to set.
-	 */
-	public static void setLogLevel(int logLevel) {
-		DJBase.logLevel = logLevel;
+	protected static void log(int severity, String mesg, Object... args) {
+		log(String.format(mesg, args), severity);
 	}
 
 	/**
