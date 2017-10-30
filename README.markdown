@@ -55,11 +55,11 @@ Jobs are Java objects that respond to a method `perform`. Jobs are serialized an
 class HelloWorldJob {
     private String name;
     
-    public void getName() {
+    public String getName() {
         return name;
     }
     
-    public String setName(String name) {
+    public void setName(String name) {
         return this.name;
     }
     
@@ -95,11 +95,11 @@ At SeatGeek, we run an email-specific queue. Emails have a `sendLater` method wh
 class Email implements DJJobHandlerInterface {
     private String recipient;
     
-    public void getRecipient() {
+    public String getRecipient() {
         return recipient;
     }
     
-    public String setRecipient(String recipient) {
+    public void setRecipient(String recipient) {
         return this.recipient;
     }
     
